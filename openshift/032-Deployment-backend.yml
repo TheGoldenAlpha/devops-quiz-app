@@ -1,0 +1,36 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: devops-quiz-backend
+  labels:
+    app: devops-quiz
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      component: backend
+  template:
+    metadata:
+      labels:
+        app: devops-quiz
+        component: backend
+    spec:
+      containers:
+        - name: backend
+          image: ghcr.io/thegoldenalpha/devops-quiz-backend:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 3000
+          env:
+            - name: POSTGRES_HOST
+              value: devops-quiz-database             # = Name des DB-Service
+          envFrom:
+            - secretRef:
+                name: devops-quiz-secret
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi

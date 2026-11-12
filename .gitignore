@@ -30,3 +30,4 @@ newrelic_agent.log
 
 # Ignore code coverage folder
 coverage
+.env

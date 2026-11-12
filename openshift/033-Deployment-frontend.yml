@@ -1,0 +1,33 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: devops-quiz-frontend
+  labels:
+    app: devops-quiz
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      component: frontend
+  template:
+    metadata:
+      labels:
+        app: devops-quiz
+        component: frontend
+    spec:
+      containers:
+        - name: frontend
+          image: ghcr.io/thegoldenalpha/devops-quiz-frontend:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8080
+          env:
+            - name: BACKEND_URL                       # Browser ruft das Backend auf → öffentliche Route
+              value: https://devops-quiz-backend-264830-floha.apps.exoscale-ch-gva-2-0.appuio.cloud
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi

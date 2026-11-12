@@ -1,0 +1,129 @@
+name: CI/CD DevOps Quiz App
+
+# Wann läuft die Pipeline?
+on:
+  push:
+    branches: [main]            # automatisch bei jedem Push auf main
+  workflow_dispatch:            # manuell im Tab "Actions" startbar
+    inputs:
+      action:
+        description: "deploy = normal ausrollen, destroy = alles löschen (inkl. PVC)"
+        required: true
+        default: deploy
+        type: choice
+        options: [deploy, destroy]
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_BACKEND: ghcr.io/thegoldenalpha/devops-quiz-backend
+  IMAGE_FRONTEND: ghcr.io/thegoldenalpha/devops-quiz-frontend
+
+jobs:
+  # ---------- Stage 1: Linting / Validierung ----------
+  lint:
+    if: github.event_name == 'push' || inputs.action == 'deploy'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: YAML prüfen (OpenShift-Manifeste + Compose)
+        run: |
+          pip install yamllint
+          yamllint -d relaxed openshift/ docker-compose/
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: JavaScript prüfen (Syntax)
+        run: |
+          node --check app/backend/app.js
+          node --check app/frontend/app.js
+
+      - name: HTML prüfen
+        run: npx --yes htmlhint app/frontend/public/index.html
+
+  # ---------- Stage 2: Images bauen und pushen ----------
+  build:
+    needs: lint
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write             # erlaubt Push nach ghcr.io
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Login bei ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}   # automatisch von GitHub, kein PAT nötig
+
+      - name: Backend bauen und pushen
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: dockerfiles/Dockerfile.backend
+          push: true
+          tags: |
+            ${{ env.IMAGE_BACKEND }}:latest
+            ${{ env.IMAGE_BACKEND }}:${{ github.sha }}
+
+      - name: Frontend bauen und pushen
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: dockerfiles/Dockerfile.frontend
+          push: true
+          tags: |
+            ${{ env.IMAGE_FRONTEND }}:latest
+            ${{ env.IMAGE_FRONTEND }}:${{ github.sha }}
+
+  # ---------- Stage 3: Deploy auf OpenShift ----------
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: oc installieren
+        run: |
+          curl -sL https://mirror.openshift.com/pub/openshift-v4/clients/ocp/stable/openshift-client-linux.tar.gz | tar xz oc
+          sudo mv oc /usr/local/bin/
+
+      - name: Login bei OpenShift (verschlüsselte Pipeline-Secrets)
+        run: |
+          oc login --token="${{ secrets.OPENSHIFT_TOKEN }}" --server="${{ secrets.OPENSHIFT_SERVER }}"
+          oc project "${{ secrets.OPENSHIFT_NAMESPACE }}"
+
+      - name: Manifeste ausrollen
+        run: oc apply -f openshift/
+
+      - name: Neue Images holen (Pods neu starten)
+        run: |
+          oc rollout restart deployment/devops-quiz-backend deployment/devops-quiz-frontend
+          oc rollout status deployment/devops-quiz-backend --timeout=180s
+          oc rollout status deployment/devops-quiz-frontend --timeout=180s
+
+  # ---------- Manuell: alles löschen ----------
+  destroy:
+    if: github.event_name == 'workflow_dispatch' && inputs.action == 'destroy'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: oc installieren
+        run: |
+          curl -sL https://mirror.openshift.com/pub/openshift-v4/clients/ocp/stable/openshift-client-linux.tar.gz | tar xz oc
+          sudo mv oc /usr/local/bin/
+
+      - name: Login bei OpenShift
+        run: |
+          oc login --token="${{ secrets.OPENSHIFT_TOKEN }}" --server="${{ secrets.OPENSHIFT_SERVER }}"
+          oc project "${{ secrets.OPENSHIFT_NAMESPACE }}"
+
+      - name: Gesamte Infrastruktur entfernen (inkl. PVC)
+        run: oc delete -f openshift/ --ignore-not-found

@@ -1,0 +1,48 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: devops-quiz-database
+  labels:
+    app: devops-quiz
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate                       # RWO-PVC: nie zwei DB-Pods gleichzeitig
+  selector:
+    matchLabels:
+      component: database
+  template:
+    metadata:
+      labels:
+        app: devops-quiz
+        component: database
+    spec:
+      containers:
+        - name: postgres
+          image: mirror.gcr.io/library/postgres:18.4   # = postgres:18.4 (Mirror wegen Docker-Hub-Limit)
+          ports:
+            - containerPort: 5432
+          envFrom:
+            - secretRef:
+                name: devops-quiz-secret             # POSTGRES_USER / _PASSWORD / _DB
+          env:
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata  # Unterordner wegen lost+found
+          resources:
+            requests:
+              cpu: 50m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          volumeMounts:
+            - name: postgres-data
+              mountPath: /var/lib/postgresql/data
+            - name: postgres-socket
+              mountPath: /var/run/postgresql          # beschreibbar für zufällige UID
+      volumes:
+        - name: postgres-data
+          persistentVolumeClaim:
+            claimName: devops-quiz-db-pvc
+        - name: postgres-socket
+          emptyDir: {}
